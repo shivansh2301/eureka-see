@@ -1,4 +1,4 @@
-name: Echo issue -> PR (single .md file, authored by submitter)
+name: echo-issue-to-pr
 
 on:
   issues:
@@ -13,36 +13,39 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Guard - only run for 'echo' label
+        if: ${{ contains(github.event.issue.labels.*.name, 'echo') }}
+        run: echo "echo label present"
+
       - name: Check out
+        if: ${{ contains(github.event.issue.labels.*.name, 'echo') }}
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-        if: ${{ contains(github.event.issue.labels.*.name, 'echo') }}
 
-      - name: Prepare echo info
-        id: f
+      - name: Prepare ids and paths
         if: ${{ contains(github.event.issue.labels.*.name, 'echo') }}
+        id: prep
         shell: bash
         run: |
           set -euo pipefail
           TITLE="${{ github.event.issue.title }}"
+          # slugify title
           SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g;s/^-+|-+$//g')
           mkdir -p echoes
-          N=$(ls echoes 2>/dev/null | grep -E '^[0-9]{4}-' | wc -l | xargs || true)
-          printf -v ID "%04d" $((N+1))
+          COUNT=$(ls -1 echoes 2>/dev/null | grep -E '^[0-9]{4}-' | wc -l | xargs || true)
+          printf -v ID "%04d" $((COUNT+1))
           FILE="echoes/${ID}-${SLUG}.md"
           YEAR=$(date +%Y)
-          {
-            echo "title=$TITLE"
-            echo "slug=$SLUG"
-            echo "year=$YEAR"
-            echo "id=$ID"
-            echo "file=$FILE"
-          } >> "$GITHUB_OUTPUT"
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+          echo "slug=$SLUG"   >> "$GITHUB_OUTPUT"
+          echo "id=$ID"       >> "$GITHUB_OUTPUT"
+          echo "year=$YEAR"   >> "$GITHUB_OUTPUT"
+          echo "file=$FILE"   >> "$GITHUB_OUTPUT"
 
-      - name: Determine author identity
-        id: author
+      - name: Determine author identity (no-reply)
         if: ${{ contains(github.event.issue.labels.*.name, 'echo') }}
+        id: author
         shell: bash
         run: |
           set -euo pipefail
@@ -56,64 +59,40 @@ jobs:
         if: ${{ contains(github.event.issue.labels.*.name, 'echo') }}
         shell: bash
         env:
-          TITLE: ${{ steps.f.outputs.title }}
-          SLUG:  ${{ steps.f.outputs.slug }}
-          YEAR:  ${{ steps.f.outputs.year }}
-          ID:    ${{ steps.f.outputs.id }}
-          FILE:  ${{ steps.f.outputs.file }}
-          AUTHOR_NAME:  ${{ steps.author.outputs.name }}
-          AUTHOR_EMAIL: ${{ steps.author.outputs.email }}
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
+          TITLE: ${{ steps.prep.outputs.title }}
+          SLUG:  ${{ steps.prep.outputs.slug }}
+          ID:    ${{ steps.prep.outputs.id }}
+          YEAR:  ${{ steps.prep.outputs.year }}
+          FILE:  ${{ steps.prep.outputs.file }}
+          AUTHOR_NAME:  ${{ steps.author.outputs.name }}
+          AUTHOR_EMAIL: ${{ steps.author.outputs.email }}
         run: |
           set -euo pipefail
           BR="echo/${SLUG}-${ID}"
           git switch -c "$BR"
 
-          # Pull issue body JSON
-          curl -s -H "Accept: application/vnd.github+json" \
-            "$GITHUB_API_URL/repos/$GH_REPO/issues/$ISSUE_NUMBER" > /tmp/issue.json
+          # fetch issue body safely via gh api
+          BODY=$(gh api "repos/$GH_REPO/issues/$ISSUE_NUMBER" --jq .body)
+          CREATED=$(date +%F)
+          AUTHOR="${AUTHOR_NAME}"
 
-          python - <<'PY'
-import json, re, os
-i=json.load(open("/tmp/issue.json"))
-body=i.get("body") or ""
-def grab(h):
-    m=re.search(rf"(?mi)^###\s*{re.escape(h)}\s*$\n+(.+?)(?:\n###|\Z)", body, re.S)
-    return (m.group(1).strip() if m else "")
-title=os.environ["TITLE"]
-id_=int(os.environ["ID"])
-author=i["user"]["login"]
-year=os.environ["YEAR"]
-created=os.popen("date +%F").read().strip()
-content=f"""# {title}
+          # write the markdown file (no heredocs with YAML-like markers)
+          printf "# %s\n\n" "$TITLE" > "$FILE"
+          printf "**Echo ID:** %s\n" "$ID" >> "$FILE"
+          printf "**Year:** %s\n" "$YEAR" >> "$FILE"
+          printf "**Created:** %s\n" "$CREATED" >> "$FILE"
+          printf "**Author:** @%s\n\n" "$AUTHOR" >> "$FILE"
+          printf "## Details\n\n" >> "$FILE"
+          printf "%s\n" "${BODY:-_No details provided._}" >> "$FILE"
 
-**Echo ID:** {id_:04d}
-**Year:** {year}
-**Created:** {created}
-**Author:** @{author}
+          git add "$FILE"
 
-## Problem
-{grab("Problem")}
-
-## Proposal
-{grab("Proposal")}
-
-## Notes
-{grab("Extra context / links")}
-"""
-os.makedirs(os.path.dirname(os.environ["FILE"]), exist_ok=True)
-open(os.environ["FILE"], "w", encoding="utf-8").write(content)
-PY
-
-          git add "${FILE}"
-
-          # Commit as the submitter (author & committer)
-          git config user.name  "${AUTHOR_NAME}"
-          git config user.email "${AUTHOR_EMAIL}"
-          git commit \
-            --author="${AUTHOR_NAME} <${AUTHOR_EMAIL}>" \
-            -m "echo(${ID}): ${TITLE}"
+          # commit as the submitter (author & committer)
+          git config user.name  "$AUTHOR_NAME"
+          git config user.email "$AUTHOR_EMAIL"
+          git commit --author="$AUTHOR_NAME <$AUTHOR_EMAIL>" -m "echo(${ID}): ${TITLE}"
 
           git push -u origin "$BR"
 
@@ -122,10 +101,13 @@ PY
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE: ${{ steps.prep.outputs.title }}
+          ID:    ${{ steps.prep.outputs.id }}
+          HEAD:  ${{ format('echo/{0}-{1}', steps.prep.outputs.slug, steps.prep.outputs.id) }}
         run: |
           set -euo pipefail
           gh pr create \
             --base main \
-            --head "echo/${{ steps.f.outputs.slug }}-${{ steps.f.outputs.id }}" \
-            --title "Echo: ${{ steps.f.outputs.id }} - ${{ steps.f.outputs.title }}" \
+            --head "$HEAD" \
+            --title "Echo: $ID - $TITLE" \
             --body "Auto-generated from issue #${{ github.event.issue.number }} by @${{ github.event.issue.user.login }}"
