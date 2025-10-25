@@ -1,4 +1,4 @@
-name: Echo issue → PR (single .md file, authored by submitter)
+name: Echo issue -> PR (single .md file, authored by submitter)
 
 on:
   issues:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   to-pr:
-    # Run only when the issue has the 'echo' label.
+    # Run only when the issue has the 'echo' label
     if: contains(github.event.issue.labels.*.name, 'echo')
     runs-on: ubuntu-latest
 
@@ -19,7 +19,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Derive identifiers
       - name: Prepare echo info
         id: f
         shell: bash
@@ -40,7 +39,6 @@ jobs:
             echo "file=$FILE"
           } >> "$GITHUB_OUTPUT"
 
-      # Determine who opened it (use GitHub no-reply that links to their account)
       - name: Determine author identity
         id: author
         shell: bash
@@ -52,7 +50,7 @@ jobs:
           echo "name=$LOGIN"  >> "$GITHUB_OUTPUT"
           echo "email=$EMAIL" >> "$GITHUB_OUTPUT"
 
-      - name: Create branch & write markdown
+      - name: Create branch and write markdown
         shell: bash
         env:
           TITLE: ${{ steps.f.outputs.title }}
@@ -69,7 +67,7 @@ jobs:
           BR="echo/${SLUG}-${ID}"
           git switch -c "$BR"
 
-          # Pull issue body (to extract Problem/Proposal/Notes)
+          # Pull issue body JSON
           curl -s -H "Accept: application/vnd.github+json" \
             "$GITHUB_API_URL/repos/$GH_REPO/issues/$ISSUE_NUMBER" > /tmp/issue.json
 
@@ -87,9 +85,9 @@ year=os.environ["YEAR"]
 created=os.popen("date +%F").read().strip()
 content=f"""# {title}
 
-**Echo ID:** {id_:04d}  
-**Year:** {year}  
-**Created:** {created}  
+**Echo ID:** {id_:04d}
+**Year:** {year}
+**Created:** {created}
 **Author:** @{author}
 
 ## Problem
@@ -107,7 +105,7 @@ PY
 
           git add "${FILE}"
 
-          # Make both committer and author the submitter
+          # Commit as the submitter (author & committer)
           git config user.name  "${AUTHOR_NAME}"
           git config user.email "${AUTHOR_EMAIL}"
           git commit \
@@ -117,9 +115,9 @@ PY
           git push -u origin "$BR"
 
       - name: Open PR
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
         run: |
           set -euo pipefail
           gh pr create \
