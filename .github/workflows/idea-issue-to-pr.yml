@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   to-pr:
-    if: contains(join(github.event.issue.labels.*.name, ','), 'idea')
+    if: contains(join(github.event.issue.labels.*.name, ','), 'echo')
     runs-on: ubuntu-latest
 
     steps:
