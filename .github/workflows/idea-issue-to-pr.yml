@@ -10,17 +10,18 @@ permissions:
 
 jobs:
   to-pr:
-    # Run only when the issue has the 'echo' label
-    if: contains(github.event.issue.labels.*.name, 'echo')
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
+        if: ${{ contains(github.event.issue.labels.*.name, 'echo') }}
 
       - name: Prepare echo info
         id: f
+        if: ${{ contains(github.event.issue.labels.*.name, 'echo') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -41,6 +42,7 @@ jobs:
 
       - name: Determine author identity
         id: author
+        if: ${{ contains(github.event.issue.labels.*.name, 'echo') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -51,6 +53,7 @@ jobs:
           echo "email=$EMAIL" >> "$GITHUB_OUTPUT"
 
       - name: Create branch and write markdown
+        if: ${{ contains(github.event.issue.labels.*.name, 'echo') }}
         shell: bash
         env:
           TITLE: ${{ steps.f.outputs.title }}
@@ -115,6 +118,7 @@ PY
           git push -u origin "$BR"
 
       - name: Open PR
+        if: ${{ contains(github.event.issue.labels.*.name, 'echo') }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
