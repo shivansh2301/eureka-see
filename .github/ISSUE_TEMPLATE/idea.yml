@@ -1,0 +1,52 @@
+name: New echo
+description: Propose a new echo
+title: "[Echo] "
+labels:
+  - idea
+  - status:proposed
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for submitting an idea! Keep it short and clear. You’ll review it in a PR after this.
+
+  - type: input
+    id: title
+    attributes:
+      label: Title
+      placeholder: Short, punchy title
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What / why this matters.
+      placeholder: Making a note is important because it helps you remember.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: 1 line proposal.
+      placeholder: fill a max 10 word direction.
+    validations:
+      required: true
+
+  - type: input
+    id: tags
+    attributes:
+      label: Tags
+      description: Optional, comma-separated.
+      placeholder: tree, food, human, system
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Extra context / links
+      description: Anything else (links, sketches, prior art).
+      placeholder: URLs, references, notes.
+

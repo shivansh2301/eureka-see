@@ -1,0 +1,122 @@
+name: Idea issue → PR (single .md file, authored by submitter)
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  to-pr:
+    if: contains(join(github.event.issue.labels.*.name, ','), 'idea')
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # derive identifiers
+      - name: Prepare idea info
+        id: f
+        run: |
+          set -euo pipefail
+          TITLE="${{ github.event.issue.title }}"
+          SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g;s/^-+|-+$//g')
+          YEAR=$(date +%Y)
+          mkdir -p ideas/$YEAR
+          N=$(ls ideas/$YEAR | grep -E '^[0-9]{4}-' | wc -l | xargs)
+          printf -v ID "%04d" $((N+1))
+          DIR="ideas/$YEAR"
+          FILE="${DIR}/${ID}-${SLUG}.md"
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+          echo "slug=$SLUG"   >> $GITHUB_OUTPUT
+          echo "year=$YEAR"   >> $GITHUB_OUTPUT
+          echo "id=$ID"       >> $GITHUB_OUTPUT
+          echo "file=$FILE"   >> $GITHUB_OUTPUT
+
+      # determine who opened it
+      - name: Determine author identity
+        id: author
+        run: |
+          set -euo pipefail
+          LOGIN='${{ github.event.issue.user.login }}'
+          IDNUM='${{ github.event.issue.user.id }}'
+          EMAIL="${IDNUM}+${LOGIN}@users.noreply.github.com"
+          echo "name=$LOGIN" >> $GITHUB_OUTPUT
+          echo "email=$EMAIL" >> $GITHUB_OUTPUT
+
+      - name: Create branch & write markdown
+        env:
+          TITLE: ${{ steps.f.outputs.title }}
+          SLUG:  ${{ steps.f.outputs.slug }}
+          YEAR:  ${{ steps.f.outputs.year }}
+          ID:    ${{ steps.f.outputs.id }}
+          FILE:  ${{ steps.f.outputs.file }}
+          AUTHOR_NAME:  ${{ steps.author.outputs.name }}
+          AUTHOR_EMAIL: ${{ steps.author.outputs.email }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          BR="idea/${SLUG}-${ID}"
+          git switch -c "$BR"
+
+          # pull issue body
+          curl -s -H "Accept: application/vnd.github+json" \
+            "$GITHUB_API_URL/repos/$GH_REPO/issues/$ISSUE_NUMBER" > /tmp/issue.json
+
+          python - <<'PY'
+import json, re, os
+i=json.load(open("/tmp/issue.json"))
+body=i.get("body") or ""
+def grab(h):
+    m=re.search(rf"(?mi)^###\s*{re.escape(h)}\s*$\n+(.+?)(?:\n###|\Z)", body, re.S)
+    return (m.group(1).strip() if m else "")
+title=os.environ["TITLE"]
+id_=int(os.environ["ID"])
+author=i["user"]["login"]
+created=os.popen("date +%F").read().strip()
+content=f"""# {title}
+
+**ID:** {id_:04d}  
+**Created:** {created}  
+**Author:** @{author}
+
+## Problem
+{grab("Problem")}
+
+## Proposal
+{grab("Proposal")}
+
+## Notes
+{grab("Extra context / links")}
+"""
+os.makedirs(os.path.dirname(os.environ["FILE"]), exist_ok=True)
+open(os.environ["FILE"],"w").write(content)
+PY
+
+          git add "${FILE}"
+
+          git config user.name  "${AUTHOR_NAME}"
+          git config user.email "${AUTHOR_EMAIL}"
+
+          git commit \
+            --author="${AUTHOR_NAME} <${AUTHOR_EMAIL}>" \
+            -m "idea(${ID}): ${TITLE}"
+
+          git push -u origin "$BR"
+
+      - name: Open PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh pr create \
+            --base main \
+            --head "idea/${{ steps.f.outputs.slug }}-${{ steps.f.outputs.id }}" \
+            --title "Idea: ${{ steps.f.outputs.id }} - ${{ steps.f.outputs.title }}" \
+            --body "Auto-generated from issue #${{ github.event.issue.number }} by @${{ github.event.issue.user.login }}"
+
