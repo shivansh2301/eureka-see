@@ -3,6 +3,7 @@ name: echo-issue-to-pr
 on:
   issues:
     types: [opened, edited, reopened]
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -13,52 +14,71 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Guard - only run for 'echo' label
-        if: ${{ contains(github.event.issue.labels.*.name, 'echo') }}
-        run: echo "echo label present"
+      - name: Guard (only proceed if issue has 'echo' label)
+        id: guard
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUM: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          LABELS=$(gh api "repos/$REPO/issues/$NUM/labels" --jq '.[].name' | tr '\n' ' ')
+          echo "labels: $LABELS"
+          if echo " $LABELS " | grep -q " echo "; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No 'echo' label; skipping."
+          fi
 
       - name: Check out
-        if: ${{ contains(github.event.issue.labels.*.name, 'echo') }}
+        if: ${{ steps.guard.outputs.run == 'true' }}
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Prepare ids and paths
-        if: ${{ contains(github.event.issue.labels.*.name, 'echo') }}
+      - name: Prep IDs and paths
+        if: ${{ steps.guard.outputs.run == 'true' }}
         id: prep
         shell: bash
+        env:
+          TITLE_RAW: ${{ github.event.issue.title }}
         run: |
           set -euo pipefail
-          TITLE="${{ github.event.issue.title }}"
-          # slugify title
-          SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g;s/^-+|-+$//g')
+          TITLE="$TITLE_RAW"
+          SLUG=$(printf '%s' "$TITLE" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g;s/^-+|-+$//g')
           mkdir -p echoes
           COUNT=$(ls -1 echoes 2>/dev/null | grep -E '^[0-9]{4}-' | wc -l | xargs || true)
           printf -v ID "%04d" $((COUNT+1))
           FILE="echoes/${ID}-${SLUG}.md"
           YEAR=$(date +%Y)
-          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
-          echo "slug=$SLUG"   >> "$GITHUB_OUTPUT"
-          echo "id=$ID"       >> "$GITHUB_OUTPUT"
-          echo "year=$YEAR"   >> "$GITHUB_OUTPUT"
-          echo "file=$FILE"   >> "$GITHUB_OUTPUT"
+          {
+            echo "title=$TITLE"
+            echo "slug=$SLUG"
+            echo "id=$ID"
+            echo "year=$YEAR"
+            echo "file=$FILE"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Determine author identity (no-reply)
-        if: ${{ contains(github.event.issue.labels.*.name, 'echo') }}
+        if: ${{ steps.guard.outputs.run == 'true' }}
         id: author
         shell: bash
+        env:
+          LOGIN: ${{ github.event.issue.user.login }}
+          IDNUM: ${{ github.event.issue.user.id }}
         run: |
           set -euo pipefail
-          LOGIN='${{ github.event.issue.user.login }}'
-          IDNUM='${{ github.event.issue.user.id }}'
           EMAIL="${IDNUM}+${LOGIN}@users.noreply.github.com"
           echo "name=$LOGIN"  >> "$GITHUB_OUTPUT"
           echo "email=$EMAIL" >> "$GITHUB_OUTPUT"
 
       - name: Create branch and write markdown
-        if: ${{ contains(github.event.issue.labels.*.name, 'echo') }}
+        if: ${{ steps.guard.outputs.run == 'true' }}
         shell: bash
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           TITLE: ${{ steps.prep.outputs.title }}
@@ -73,31 +93,29 @@ jobs:
           BR="echo/${SLUG}-${ID}"
           git switch -c "$BR"
 
-          # fetch issue body safely via gh api
           BODY=$(gh api "repos/$GH_REPO/issues/$ISSUE_NUMBER" --jq .body)
           CREATED=$(date +%F)
-          AUTHOR="${AUTHOR_NAME}"
 
-          # write the markdown file (no heredocs with YAML-like markers)
           printf "# %s\n\n" "$TITLE" > "$FILE"
           printf "**Echo ID:** %s\n" "$ID" >> "$FILE"
           printf "**Year:** %s\n" "$YEAR" >> "$FILE"
           printf "**Created:** %s\n" "$CREATED" >> "$FILE"
-          printf "**Author:** @%s\n\n" "$AUTHOR" >> "$FILE"
+          printf "**Author:** @%s\n\n" "$AUTHOR_NAME" >> "$FILE"
           printf "## Details\n\n" >> "$FILE"
-          printf "%s\n" "${BODY:-_No details provided._}" >> "$FILE"
+          if [ -n "${BODY}" ]; then
+            printf "%s\n" "$BODY" >> "$FILE"
+          else
+            printf "_No details provided._\n" >> "$FILE"
+          fi
 
           git add "$FILE"
-
-          # commit as the submitter (author & committer)
           git config user.name  "$AUTHOR_NAME"
           git config user.email "$AUTHOR_EMAIL"
           git commit --author="$AUTHOR_NAME <$AUTHOR_EMAIL>" -m "echo(${ID}): ${TITLE}"
-
           git push -u origin "$BR"
 
       - name: Open PR
-        if: ${{ contains(github.event.issue.labels.*.name, 'echo') }}
+        if: ${{ steps.guard.outputs.run == 'true' }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
