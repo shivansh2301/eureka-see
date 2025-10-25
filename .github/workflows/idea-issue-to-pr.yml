@@ -1,4 +1,4 @@
-name: Idea issue → PR (single .md file, authored by submitter)
+name: Echo issue → PR (single .md file, authored by submitter)
 
 on:
   issues:
@@ -10,7 +10,8 @@ permissions:
 
 jobs:
   to-pr:
-    if: contains(join(github.event.issue.labels.*.name, ','), 'echo')
+    # Run only when the issue has the 'echo' label.
+    if: contains(github.event.issue.labels.*.name, 'echo')
     runs-on: ubuntu-latest
 
     steps:
@@ -18,37 +19,41 @@ jobs:
         with:
           fetch-depth: 0
 
-      # derive identifiers
-      - name: Prepare idea info
+      # Derive identifiers
+      - name: Prepare echo info
         id: f
+        shell: bash
         run: |
           set -euo pipefail
           TITLE="${{ github.event.issue.title }}"
           SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g;s/^-+|-+$//g')
-          YEAR=$(date +%Y)
-          mkdir -p ideas/$YEAR
-          N=$(ls ideas/$YEAR | grep -E '^[0-9]{4}-' | wc -l | xargs)
+          mkdir -p echoes
+          N=$(ls echoes 2>/dev/null | grep -E '^[0-9]{4}-' | wc -l | xargs || true)
           printf -v ID "%04d" $((N+1))
-          DIR="ideas/$YEAR"
-          FILE="${DIR}/${ID}-${SLUG}.md"
-          echo "title=$TITLE" >> $GITHUB_OUTPUT
-          echo "slug=$SLUG"   >> $GITHUB_OUTPUT
-          echo "year=$YEAR"   >> $GITHUB_OUTPUT
-          echo "id=$ID"       >> $GITHUB_OUTPUT
-          echo "file=$FILE"   >> $GITHUB_OUTPUT
+          FILE="echoes/${ID}-${SLUG}.md"
+          YEAR=$(date +%Y)
+          {
+            echo "title=$TITLE"
+            echo "slug=$SLUG"
+            echo "year=$YEAR"
+            echo "id=$ID"
+            echo "file=$FILE"
+          } >> "$GITHUB_OUTPUT"
 
-      # determine who opened it
+      # Determine who opened it (use GitHub no-reply that links to their account)
       - name: Determine author identity
         id: author
+        shell: bash
         run: |
           set -euo pipefail
           LOGIN='${{ github.event.issue.user.login }}'
           IDNUM='${{ github.event.issue.user.id }}'
           EMAIL="${IDNUM}+${LOGIN}@users.noreply.github.com"
-          echo "name=$LOGIN" >> $GITHUB_OUTPUT
-          echo "email=$EMAIL" >> $GITHUB_OUTPUT
+          echo "name=$LOGIN"  >> "$GITHUB_OUTPUT"
+          echo "email=$EMAIL" >> "$GITHUB_OUTPUT"
 
       - name: Create branch & write markdown
+        shell: bash
         env:
           TITLE: ${{ steps.f.outputs.title }}
           SLUG:  ${{ steps.f.outputs.slug }}
@@ -61,10 +66,10 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           set -euo pipefail
-          BR="idea/${SLUG}-${ID}"
+          BR="echo/${SLUG}-${ID}"
           git switch -c "$BR"
 
-          # pull issue body
+          # Pull issue body (to extract Problem/Proposal/Notes)
           curl -s -H "Accept: application/vnd.github+json" \
             "$GITHUB_API_URL/repos/$GH_REPO/issues/$ISSUE_NUMBER" > /tmp/issue.json
 
@@ -78,10 +83,12 @@ def grab(h):
 title=os.environ["TITLE"]
 id_=int(os.environ["ID"])
 author=i["user"]["login"]
+year=os.environ["YEAR"]
 created=os.popen("date +%F").read().strip()
 content=f"""# {title}
 
-**ID:** {id_:04d}  
+**Echo ID:** {id_:04d}  
+**Year:** {year}  
 **Created:** {created}  
 **Author:** @{author}
 
@@ -95,28 +102,28 @@ content=f"""# {title}
 {grab("Extra context / links")}
 """
 os.makedirs(os.path.dirname(os.environ["FILE"]), exist_ok=True)
-open(os.environ["FILE"],"w").write(content)
+open(os.environ["FILE"], "w", encoding="utf-8").write(content)
 PY
 
           git add "${FILE}"
 
+          # Make both committer and author the submitter
           git config user.name  "${AUTHOR_NAME}"
           git config user.email "${AUTHOR_EMAIL}"
-
           git commit \
             --author="${AUTHOR_NAME} <${AUTHOR_EMAIL}>" \
-            -m "idea(${ID}): ${TITLE}"
+            -m "echo(${ID}): ${TITLE}"
 
           git push -u origin "$BR"
 
       - name: Open PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
           set -euo pipefail
           gh pr create \
             --base main \
-            --head "idea/${{ steps.f.outputs.slug }}-${{ steps.f.outputs.id }}" \
-            --title "Idea: ${{ steps.f.outputs.id }} - ${{ steps.f.outputs.title }}" \
+            --head "echo/${{ steps.f.outputs.slug }}-${{ steps.f.outputs.id }}" \
+            --title "Echo: ${{ steps.f.outputs.id }} - ${{ steps.f.outputs.title }}" \
             --body "Auto-generated from issue #${{ github.event.issue.number }} by @${{ github.event.issue.user.login }}"
-
